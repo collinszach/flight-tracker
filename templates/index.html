@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FlightTracker</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-o8C+53XZ1zkbbYMQKSkJaqWj7RkiwZqhITyS+M6pLMw="
+    crossorigin=""
+  />
+  <style>
+    html, body { margin:0; padding:0; height:100%; }
+    #map { width:100%; height:100%; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-QVmqVN0483X9pK4emgRPYjJ5+JlARg3bPhg1M2wrnBE="
+    crossorigin=""
+  ></script>
+  <script>
+    // Initialize map
+    const map = L.map('map').setView([39.5, -98.35], 4);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 8,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Layers
+    const planeLayer = L.layerGroup().addTo(map);
+    const pathLayer  = L.layerGroup().addTo(map);
+
+    // History storage
+    const flightsData = {};
+
+    // Define blue plane icon
+    const planeIcon = L.icon({
+      iconUrl: '/static/plane.png',
+      iconSize:   [32, 32],
+      iconAnchor: [16, 16],
+      popupAnchor:[0, -16]
+    });
+
+    // Fetch & render loop
+    async function fetchAndRender() {
+      const res = await fetch('/flights');
+      const { flights } = await res.json();
+
+      planeLayer.clearLayers();
+      pathLayer.clearLayers();
+
+      const activeIds = new Set();
+
+      flights.forEach(f => {
+        const id = f.icao24;
+        activeIds.add(id);
+
+        // init history
+        if (!flightsData[id]) flightsData[id] = { positions: [] };
+        flightsData[id].positions.push([f.lat, f.lon]);
+        if (flightsData[id].positions.length > 50) {
+          flightsData[id].positions.shift();
+        }
+
+        // draw path
+        L.polyline(flightsData[id].positions, { weight: 2 }).addTo(pathLayer);
+
+        // use divIcon for rotation
+        const html = `
+          <div style="
+            transform: rotate(${(f.hdg||0)}deg);
+            width:32px; height:32px;
+            margin:-16px 0 0 -16px;
+          ">
+            <img src="/static/plane.png" width="32" height="32"/>
+          </div>`;
+        const rotatedIcon = L.divIcon({
+          html,
+          className: ''
+        });
+
+        // marker
+        L.marker([f.lat, f.lon], { icon: rotatedIcon })
+          .bindPopup(`
+            <b>${f.callsign || id}</b><br>
+            Alt: ${Math.round(f.alt)} m<br>
+            Spd: ${Math.round(f.vel)} m/s
+          `)
+          .addTo(planeLayer);
+      });
+
+      // cleanup stale
+      Object.keys(flightsData).forEach(id => {
+        if (!activeIds.has(id)) delete flightsData[id];
+      });
+    }
+
+    // start polling
+    fetchAndRender();
+    setInterval(fetchAndRender, 10000);
+  </script>
+</body>
+</html>
